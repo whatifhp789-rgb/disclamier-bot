@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# disclaimer_bot.py – Edit Mode for Channel + Group/Private
+# disclaimer_bot.py – Channel + Group/Private Edit Mode
 
 import os
 import sys
@@ -13,8 +13,8 @@ import fcntl
 from flask import Flask, request
 
 # ========== CONFIG ==========
-BOT_TOKEN = "8845364296:AAEp8LIWzferAhwXlfNUIyRKY7u_YYnbwPk"
-OWNER_IDS = [8754004223]  # <-- REPLACE WITH YOUR TELEGRAM ID
+BOT_TOKEN = "8845364296:AAEp8LIWzferAhwXlfNUIyRKY7u_YYnbwPk"  # <-- APNA TOKEN
+OWNER_IDS = [8754004223]  # <-- APNI TELEGRAM ID (integer)
 DB_FILE = "disclaimer.db"
 LOCK_FILE = "bot.lock"
 DEFAULT_DISCLAIMER = "\n\n⚠️ Disclaimer: This content is only for educational purposes."
@@ -193,7 +193,6 @@ def process_message(update_id, chat_id, message_id, text, caption, is_channel=Fa
         return
 
     # ---- ADMIN COMMANDS (only work in private/group, not in channel) ----
-    # We'll skip admin commands in channels (they are text messages)
     if text and text.startswith("/") and not is_channel:
         parts = text.split(maxsplit=1)
         cmd = parts[0].lower()
@@ -299,7 +298,6 @@ def polling_loop():
             results = data.get('result', [])
             for update in results:
                 update_id = update['update_id']
-                # Check for message (private/groups) or channel_post (channels)
                 if 'message' in update:
                     msg = update['message']
                     is_channel = False
@@ -307,7 +305,6 @@ def polling_loop():
                     msg = update['channel_post']
                     is_channel = True
                 else:
-                    # Other updates (edited, etc.) – just update offset
                     if update_id >= offset:
                         offset = update_id + 1
                         set_offset(offset)

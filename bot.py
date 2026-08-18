@@ -14,7 +14,7 @@ from flask import Flask, request
 
 # ========== CONFIG ==========
 BOT_TOKEN = "8845364296:AAEp8LIWzferAhwXlfNUIyRKY7u_YYnbwPk"  # Your token
-OWNER_IDS = [123456789]  # <-- REPLACE WITH YOUR TELEGRAM USER ID (integer)
+OWNER_IDS = [8754004223]  # <-- REPLACE WITH YOUR TELEGRAM USER ID (integer)
 DB_FILE = "disclaimer.db"
 LOCK_FILE = "bot.lock"
 DEFAULT_DISCLAIMER = "<b>⚠️ Disclaimer: This content is only for educational purposes.</b>"

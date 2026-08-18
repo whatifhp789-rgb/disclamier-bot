@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# disclaimer_bot.py – Educational Disclaimer Bot (Admin-Controlled + HTML Bold)
+# disclaimer_bot.py – Disclaimer as a separate message (not reply)
 
 import os
 import sys
@@ -14,7 +14,7 @@ from flask import Flask, request
 
 # ========== CONFIG ==========
 BOT_TOKEN = "8845364296:AAEp8LIWzferAhwXlfNUIyRKY7u_YYnbwPk"  # Your token
-OWNER_IDS = [8754004223]  # <-- REPLACE WITH YOUR TELEGRAM USER ID (integer)
+OWNER_IDS = [8754004223]  # <-- REPLACE WITH YOUR TELEGRAM USER ID
 DB_FILE = "disclaimer.db"
 LOCK_FILE = "bot.lock"
 DEFAULT_DISCLAIMER = "<b>⚠️ Disclaimer: This content is only for educational purposes.</b>"
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# ========== DATABASE SETUP ==========
+# ========== DATABASE SETUP (unchanged) ==========
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -52,7 +52,6 @@ def init_db():
             value TEXT
         )
     ''')
-    # Insert default disclaimer if not exists
     c.execute("INSERT OR IGNORE INTO bot_state (key, value) VALUES ('disclaimer', ?)", (DEFAULT_DISCLAIMER,))
     conn.commit()
     conn.close()
@@ -64,9 +63,7 @@ def get_disclaimer():
     c.execute("SELECT value FROM bot_state WHERE key='disclaimer'")
     row = c.fetchone()
     conn.close()
-    if row:
-        return row[0]
-    return DEFAULT_DISCLAIMER
+    return row[0] if row else DEFAULT_DISCLAIMER
 
 def set_disclaimer(text):
     conn = sqlite3.connect(DB_FILE)
@@ -142,17 +139,15 @@ def call_telegram(method, **kwargs):
         logger.error(f"Telegram call exception: {e}")
         return None
 
-def send_reply(chat_id, reply_to_message_id, text):
-    """Send a reply with HTML bold formatting."""
-    # Ensure bold with <b> tags (HTML)
+def send_disclaimer(chat_id, text):
+    """Send a new message (not a reply) with bold disclaimer."""
     if not (text.startswith("<b>") and text.endswith("</b>")):
         text = f"<b>{text}</b>"
     return call_telegram(
         "sendMessage",
         chat_id=chat_id,
-        reply_to_message_id=reply_to_message_id,
         text=text,
-        parse_mode="HTML"   # <-- HTML mode
+        parse_mode="HTML"
     )
 
 # ========== MESSAGE PROCESSOR ==========
@@ -168,7 +163,7 @@ def process_message(update_id, chat_id, message_id, text):
         mark_update_processed(update_id)
         return
 
-    # Handle admin commands
+    # Admin commands
     if text and text.startswith("/"):
         parts = text.split(maxsplit=1)
         cmd = parts[0].lower()
@@ -176,30 +171,30 @@ def process_message(update_id, chat_id, message_id, text):
 
         if cmd == "/getdisclaimer":
             current = get_disclaimer()
-            send_reply(chat_id, message_id, f"📜 Current Disclaimer:\n{current}")
+            send_disclaimer(chat_id, f"📜 Current Disclaimer:\n{current}")
             mark_update_processed(update_id)
             mark_message_processed(chat_id, message_id)
             return
 
         if chat_id not in OWNER_IDS:
-            send_reply(chat_id, message_id, "❌ You are not authorized to use this command.")
+            send_disclaimer(chat_id, "❌ You are not authorized to use this command.")
             mark_update_processed(update_id)
             mark_message_processed(chat_id, message_id)
             return
 
         if cmd == "/setdisclaimer":
             if not args:
-                send_reply(chat_id, message_id, "Usage: /setdisclaimer <your disclaimer text>")
+                send_disclaimer(chat_id, "Usage: /setdisclaimer <your disclaimer text>")
             else:
                 set_disclaimer(args)
-                send_reply(chat_id, message_id, f"✅ Disclaimer updated!\n\n{args}")
+                send_disclaimer(chat_id, f"✅ Disclaimer updated!\n\n{args}")
             mark_update_processed(update_id)
             mark_message_processed(chat_id, message_id)
             return
 
         if cmd == "/resetdisclaimer":
             reset_disclaimer()
-            send_reply(chat_id, message_id, f"✅ Disclaimer reset to default.\n\n{DEFAULT_DISCLAIMER}")
+            send_disclaimer(chat_id, f"✅ Disclaimer reset to default.\n\n{DEFAULT_DISCLAIMER}")
             mark_update_processed(update_id)
             mark_message_processed(chat_id, message_id)
             return
@@ -217,7 +212,8 @@ def process_message(update_id, chat_id, message_id, text):
         mark_message_processed(chat_id, message_id)
         return
 
-    result = send_reply(chat_id, message_id, current_disclaimer)
+    # Send disclaimer as a new message (not reply)
+    result = send_disclaimer(chat_id, current_disclaimer)
     if result:
         logger.info(f"Disclaimer sent for message {chat_id}/{message_id}")
         mark_update_processed(update_id)
@@ -225,7 +221,7 @@ def process_message(update_id, chat_id, message_id, text):
     else:
         logger.error(f"Failed to send disclaimer for message {chat_id}/{message_id}")
 
-# ========== POLLING LOOP ==========
+# ========== POLLING LOOP (unchanged) ==========
 def polling_loop():
     offset = get_offset()
     logger.info(f"Polling loop started with offset={offset}")

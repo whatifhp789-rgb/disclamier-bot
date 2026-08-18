@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# disclaimer_bot.py – Appends disclaimer by editing original message
+# disclaimer_bot.py – Edit Mode + Test Command
 
 import os
 import sys
@@ -13,11 +13,11 @@ import fcntl
 from flask import Flask, request
 
 # ========== CONFIG ==========
-BOT_TOKEN = "8845364296:AAEp8LIWzferAhwXlfNUIyRKY7u_YYnbwPk"  # Your token
-OWNER_IDS = [8754004223]  # <-- REPLACE WITH YOUR TELEGRAM USER ID
+BOT_TOKEN = "8845364296:AAEp8LIWzferAhwXlfNUIyRKY7u_YYnbwPk"
+OWNER_IDS = [8754004223]  # <-- REPLACE WITH YOUR TELEGRAM ID
 DB_FILE = "disclaimer.db"
 LOCK_FILE = "bot.lock"
-DEFAULT_DISCLAIMER = "\n\n⚠️ Disclaimer: This content is only for educational purposes."  # Append with newlines
+DEFAULT_DISCLAIMER = "\n\n⚠️ Disclaimer: This content is only for educational purposes."
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 logging.basicConfig(
@@ -52,7 +52,6 @@ def init_db():
             value TEXT
         )
     ''')
-    # Store disclaimer without any formatting (we'll append raw)
     c.execute("INSERT OR IGNORE INTO bot_state (key, value) VALUES ('disclaimer', ?)", (DEFAULT_DISCLAIMER,))
     conn.commit()
     conn.close()
@@ -129,39 +128,52 @@ def call_telegram(method, **kwargs):
     try:
         resp = requests.post(url, json=kwargs, timeout=30)
         if resp.status_code != 200:
-            logger.error(f"Telegram API error: {resp.status_code} - {resp.text}")
+            logger.error(f"API error {resp.status_code}: {resp.text}")
             return None
         data = resp.json()
         if not data.get('ok'):
-            logger.error(f"Telegram API error: {data}")
+            logger.error(f"API error: {data}")
             return None
         return data.get('result')
     except Exception as e:
-        logger.error(f"Telegram call exception: {e}")
+        logger.error(f"call_telegram exception: {e}")
         return None
 
 def edit_message(chat_id, message_id, new_text):
-    """Edit the original message to append disclaimer."""
-    return call_telegram(
+    logger.info(f"Editing message {chat_id}/{message_id}")
+    result = call_telegram(
         "editMessageText",
         chat_id=chat_id,
         message_id=message_id,
         text=new_text,
         parse_mode="HTML"
     )
+    if result:
+        logger.info("Edit successful")
+    else:
+        logger.error("Edit failed! Check admin permissions.")
+    return result
 
 def edit_caption(chat_id, message_id, new_caption):
-    """Edit caption for media messages."""
-    return call_telegram(
+    logger.info(f"Editing caption {chat_id}/{message_id}")
+    result = call_telegram(
         "editMessageCaption",
         chat_id=chat_id,
         message_id=message_id,
         caption=new_caption,
         parse_mode="HTML"
     )
+    if result:
+        logger.info("Caption edit successful")
+    else:
+        logger.error("Caption edit failed!")
+    return result
+
+def send_message(chat_id, text):
+    return call_telegram("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML")
 
 # ========== MESSAGE PROCESSOR ==========
-def process_message(update_id, chat_id, message_id, text, caption=None):
+def process_message(update_id, chat_id, message_id, text, caption):
     logger.info(f"Processing: update_id={update_id}, chat={chat_id}, msg={message_id}")
 
     if is_update_processed(update_id):
@@ -173,16 +185,14 @@ def process_message(update_id, chat_id, message_id, text, caption=None):
         mark_update_processed(update_id)
         return
 
-    # Determine current content (text or caption)
     current_content = text if text is not None else caption
     if not current_content:
-        # No text or caption – cannot edit
-        logger.info("Message has no text/caption – skipping.")
+        logger.info("No text/caption – skipping.")
         mark_update_processed(update_id)
         mark_message_processed(chat_id, message_id)
         return
 
-    # Admin commands (if it's a text message)
+    # ---- ADMIN COMMANDS ----
     if text and text.startswith("/"):
         parts = text.split(maxsplit=1)
         cmd = parts[0].lower()
@@ -190,30 +200,47 @@ def process_message(update_id, chat_id, message_id, text, caption=None):
 
         if cmd == "/getdisclaimer":
             current = get_disclaimer()
-            send_disclaimer_as_new(chat_id, f"📜 Current Disclaimer:\n{current}")
+            send_message(chat_id, f"📜 Current Disclaimer:\n{current}")
+            mark_update_processed(update_id)
+            mark_message_processed(chat_id, message_id)
+            return
+
+        # ---- /testedit ----
+        if cmd == "/testedit":
+            # Send a test message, then edit it
+            sent = send_message(chat_id, "Testing edit capability...")
+            if sent:
+                time.sleep(2)
+                edit_result = edit_message(chat_id, sent['message_id'], "✅ Edit successful! Bot can edit messages.")
+                if edit_result:
+                    send_message(chat_id, "✅ Bot can edit messages!")
+                else:
+                    send_message(chat_id, "❌ Edit failed. Please make bot admin with 'Edit messages' permission.")
+            else:
+                send_message(chat_id, "❌ Could not send test message.")
             mark_update_processed(update_id)
             mark_message_processed(chat_id, message_id)
             return
 
         if chat_id not in OWNER_IDS:
-            send_disclaimer_as_new(chat_id, "❌ Not authorized.")
+            send_message(chat_id, "❌ Not authorized.")
             mark_update_processed(update_id)
             mark_message_processed(chat_id, message_id)
             return
 
         if cmd == "/setdisclaimer":
             if not args:
-                send_disclaimer_as_new(chat_id, "Usage: /setdisclaimer <text>")
+                send_message(chat_id, "Usage: /setdisclaimer <text>")
             else:
                 set_disclaimer(args)
-                send_disclaimer_as_new(chat_id, f"✅ Disclaimer updated!\n\n{args}")
+                send_message(chat_id, f"✅ Disclaimer updated!\n\n{args}")
             mark_update_processed(update_id)
             mark_message_processed(chat_id, message_id)
             return
 
         if cmd == "/resetdisclaimer":
             reset_disclaimer()
-            send_disclaimer_as_new(chat_id, f"✅ Reset to default.\n\n{DEFAULT_DISCLAIMER}")
+            send_message(chat_id, f"✅ Reset to default.\n\n{DEFAULT_DISCLAIMER}")
             mark_update_processed(update_id)
             mark_message_processed(chat_id, message_id)
             return
@@ -223,7 +250,7 @@ def process_message(update_id, chat_id, message_id, text, caption=None):
         mark_message_processed(chat_id, message_id)
         return
 
-    # Normal message: check if disclaimer already present
+    # ---- NORMAL MESSAGE ----
     disclaimer = get_disclaimer()
     if disclaimer in current_content:
         logger.info("Disclaimer already present – skipping.")
@@ -231,32 +258,20 @@ def process_message(update_id, chat_id, message_id, text, caption=None):
         mark_message_processed(chat_id, message_id)
         return
 
-    # Append disclaimer to the content
     new_content = current_content + disclaimer
 
-    # Edit the original message
+    # Edit text or caption
     if text is not None:
-        # It's a text message
         result = edit_message(chat_id, message_id, new_content)
     else:
-        # It's a media with caption
         result = edit_caption(chat_id, message_id, new_content)
 
     if result:
-        logger.info(f"Disclaimer appended to message {chat_id}/{message_id}")
+        logger.info(f"Disclaimer appended to {chat_id}/{message_id}")
         mark_update_processed(update_id)
         mark_message_processed(chat_id, message_id)
     else:
-        logger.error(f"Failed to edit message {chat_id}/{message_id}")
-
-# Helper to send a new message (for admin commands)
-def send_disclaimer_as_new(chat_id, text):
-    return call_telegram(
-        "sendMessage",
-        chat_id=chat_id,
-        text=text,
-        parse_mode="HTML"
-    )
+        logger.error(f"Failed to edit {chat_id}/{message_id}")
 
 # ========== POLLING LOOP ==========
 def polling_loop():
@@ -297,7 +312,6 @@ def polling_loop():
                 text = msg.get('text', '')
                 caption = msg.get('caption', '')
 
-                # Process message (text or caption)
                 process_message(update_id, chat_id, message_id, text, caption)
 
                 if update_id >= offset:

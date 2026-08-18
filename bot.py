@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# disclaimer_bot.py – Channel + Group/Private Edit Mode
+# disclaimer_bot.py – Bold + 2-Line Gap for Channel/Group
 
 import os
 import sys
@@ -17,7 +17,7 @@ BOT_TOKEN = "8845364296:AAEp8LIWzferAhwXlfNUIyRKY7u_YYnbwPk"  # <-- APNA TOKEN
 OWNER_IDS = [8754004223]  # <-- APNI TELEGRAM ID (integer)
 DB_FILE = "disclaimer.db"
 LOCK_FILE = "bot.lock"
-DEFAULT_DISCLAIMER = "\n\n⚠️ Disclaimer: This content is only for educational purposes."
+DEFAULT_DISCLAIMER = "⚠️ Disclaimer: This content is only for educational purposes."  # Plain text (no bold/newlines)
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 logging.basicConfig(
@@ -170,6 +170,9 @@ def edit_caption(chat_id, message_id, new_caption):
     return result
 
 def send_message(chat_id, text):
+    # Ensure bold wrapping for admin replies
+    if not text.startswith("<b>") and not text.endswith("</b>"):
+        text = f"<b>{text}</b>"
     return call_telegram("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML")
 
 # ========== MESSAGE PROCESSOR ==========
@@ -192,7 +195,7 @@ def process_message(update_id, chat_id, message_id, text, caption, is_channel=Fa
         mark_message_processed(chat_id, message_id)
         return
 
-    # ---- ADMIN COMMANDS (only work in private/group, not in channel) ----
+    # ---- ADMIN COMMANDS (only in private/group) ----
     if text and text.startswith("/") and not is_channel:
         parts = text.split(maxsplit=1)
         cmd = parts[0].lower()
@@ -250,13 +253,17 @@ def process_message(update_id, chat_id, message_id, text, caption, is_channel=Fa
 
     # ---- NORMAL MESSAGE / CHANNEL POST ----
     disclaimer = get_disclaimer()
+    # Check if disclaimer already exists (as plain text without tags, or with tags)
+    # We'll check if the plain text is in content (case-insensitive maybe)
     if disclaimer in current_content:
         logger.info("Disclaimer already present – skipping.")
         mark_update_processed(update_id)
         mark_message_processed(chat_id, message_id)
         return
 
-    new_content = current_content + disclaimer
+    # Format disclaimer: bold + add 2 newlines before it
+    formatted_disclaimer = f"<b>{disclaimer}</b>"
+    new_content = current_content + "\n\n" + formatted_disclaimer
 
     # Edit text or caption
     if text is not None:

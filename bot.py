@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# disclaimer_bot.py – Educational Disclaimer Bot (Admin-Controlled + Bold)
+# disclaimer_bot.py – Educational Disclaimer Bot (Admin-Controlled + HTML Bold)
 
 import os
 import sys
@@ -14,10 +14,10 @@ from flask import Flask, request
 
 # ========== CONFIG ==========
 BOT_TOKEN = "8845364296:AAEp8LIWzferAhwXlfNUIyRKY7u_YYnbwPk"  # Your token
-OWNER_IDS = [8754004223]  # <-- REPLACE WITH YOUR TELEGRAM USER ID (integer)
+OWNER_IDS = [123456789]  # <-- REPLACE WITH YOUR TELEGRAM USER ID (integer)
 DB_FILE = "disclaimer.db"
 LOCK_FILE = "bot.lock"
-DEFAULT_DISCLAIMER = "**⚠️ Disclaimer: This content is only for educational purposes.**"
+DEFAULT_DISCLAIMER = "<b>⚠️ Disclaimer: This content is only for educational purposes.</b>"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 logging.basicConfig(
@@ -143,50 +143,44 @@ def call_telegram(method, **kwargs):
         return None
 
 def send_reply(chat_id, reply_to_message_id, text):
-    """Send a reply to a specific message, ensuring text is bold."""
-    # Ensure bold: if text does not start with ** and end with **, wrap it
-    if not (text.startswith("**") and text.endswith("**")):
-        text = f"**{text}**"
+    """Send a reply with HTML bold formatting."""
+    # Ensure bold with <b> tags (HTML)
+    if not (text.startswith("<b>") and text.endswith("</b>")):
+        text = f"<b>{text}</b>"
     return call_telegram(
         "sendMessage",
         chat_id=chat_id,
         reply_to_message_id=reply_to_message_id,
         text=text,
-        parse_mode="Markdown"
+        parse_mode="HTML"   # <-- HTML mode
     )
 
 # ========== MESSAGE PROCESSOR ==========
 def process_message(update_id, chat_id, message_id, text):
     logger.info(f"Processing message: update_id={update_id}, chat={chat_id}, msg={message_id}")
 
-    # 1. Dedup by update_id (Telegram retries)
     if is_update_processed(update_id):
         logger.info(f"Update {update_id} already processed – skipping.")
         return
 
-    # 2. Dedup by (chat_id, message_id)
     if is_message_processed(chat_id, message_id):
         logger.info(f"Message {chat_id}/{message_id} already processed – skipping.")
         mark_update_processed(update_id)
         return
 
-    # 3. Handle admin commands (before disclaimer check)
+    # Handle admin commands
     if text and text.startswith("/"):
         parts = text.split(maxsplit=1)
         cmd = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
 
-        # /getdisclaimer – anyone can see
         if cmd == "/getdisclaimer":
             current = get_disclaimer()
-            # Remove bold markers for display (optional)
-            display = current.strip("**")
-            send_reply(chat_id, message_id, f"📜 **Current Disclaimer:**\n{current}")
+            send_reply(chat_id, message_id, f"📜 Current Disclaimer:\n{current}")
             mark_update_processed(update_id)
             mark_message_processed(chat_id, message_id)
             return
 
-        # Admin-only commands
         if chat_id not in OWNER_IDS:
             send_reply(chat_id, message_id, "❌ You are not authorized to use this command.")
             mark_update_processed(update_id)
@@ -210,20 +204,19 @@ def process_message(update_id, chat_id, message_id, text):
             mark_message_processed(chat_id, message_id)
             return
 
-        # Other commands – ignore, but mark processed so no disclaimer reply
+        # Other commands – ignore
         mark_update_processed(update_id)
         mark_message_processed(chat_id, message_id)
         return
 
-    # 4. Normal message – check if disclaimer already present
+    # Normal message
     current_disclaimer = get_disclaimer()
     if text and current_disclaimer in text:
-        logger.info("Disclaimer already present in original message – skipping.")
+        logger.info("Disclaimer already present – skipping.")
         mark_update_processed(update_id)
         mark_message_processed(chat_id, message_id)
         return
 
-    # 5. Send the disclaimer as a reply (bold ensured by send_reply)
     result = send_reply(chat_id, message_id, current_disclaimer)
     if result:
         logger.info(f"Disclaimer sent for message {chat_id}/{message_id}")

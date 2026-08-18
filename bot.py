@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# disclaimer_bot.py – Edit Mode + Test Command
+# disclaimer_bot.py – Edit Mode for Channel + Group/Private
 
 import os
 import sys
@@ -140,7 +140,7 @@ def call_telegram(method, **kwargs):
         return None
 
 def edit_message(chat_id, message_id, new_text):
-    logger.info(f"Editing message {chat_id}/{message_id}")
+    logger.info(f"Editing text message {chat_id}/{message_id}")
     result = call_telegram(
         "editMessageText",
         chat_id=chat_id,
@@ -173,8 +173,8 @@ def send_message(chat_id, text):
     return call_telegram("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML")
 
 # ========== MESSAGE PROCESSOR ==========
-def process_message(update_id, chat_id, message_id, text, caption):
-    logger.info(f"Processing: update_id={update_id}, chat={chat_id}, msg={message_id}")
+def process_message(update_id, chat_id, message_id, text, caption, is_channel=False):
+    logger.info(f"Processing {('channel' if is_channel else 'message')}: update_id={update_id}, chat={chat_id}, msg={message_id}")
 
     if is_update_processed(update_id):
         logger.info(f"Update {update_id} already processed – skipping.")
@@ -192,8 +192,9 @@ def process_message(update_id, chat_id, message_id, text, caption):
         mark_message_processed(chat_id, message_id)
         return
 
-    # ---- ADMIN COMMANDS ----
-    if text and text.startswith("/"):
+    # ---- ADMIN COMMANDS (only work in private/group, not in channel) ----
+    # We'll skip admin commands in channels (they are text messages)
+    if text and text.startswith("/") and not is_channel:
         parts = text.split(maxsplit=1)
         cmd = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
@@ -205,17 +206,15 @@ def process_message(update_id, chat_id, message_id, text, caption):
             mark_message_processed(chat_id, message_id)
             return
 
-        # ---- /testedit ----
         if cmd == "/testedit":
-            # Send a test message, then edit it
             sent = send_message(chat_id, "Testing edit capability...")
             if sent:
                 time.sleep(2)
-                edit_result = edit_message(chat_id, sent['message_id'], "✅ Edit successful! Bot can edit messages.")
+                edit_result = edit_message(chat_id, sent['message_id'], "✅ Edit successful!")
                 if edit_result:
-                    send_message(chat_id, "✅ Bot can edit messages!")
+                    send_message(chat_id, "✅ Bot can edit messages.")
                 else:
-                    send_message(chat_id, "❌ Edit failed. Please make bot admin with 'Edit messages' permission.")
+                    send_message(chat_id, "❌ Edit failed. Check admin permissions.")
             else:
                 send_message(chat_id, "❌ Could not send test message.")
             mark_update_processed(update_id)
@@ -250,7 +249,7 @@ def process_message(update_id, chat_id, message_id, text, caption):
         mark_message_processed(chat_id, message_id)
         return
 
-    # ---- NORMAL MESSAGE ----
+    # ---- NORMAL MESSAGE / CHANNEL POST ----
     disclaimer = get_disclaimer()
     if disclaimer in current_content:
         logger.info("Disclaimer already present – skipping.")
@@ -283,7 +282,7 @@ def polling_loop():
             payload = {
                 "timeout": 30,
                 "offset": offset,
-                "allowed_updates": json.dumps(["message"])
+                "allowed_updates": json.dumps(["message", "channel_post"])
             }
             url = f"{API_URL}/getUpdates"
             resp = requests.get(url, params=payload, timeout=35)
@@ -300,19 +299,26 @@ def polling_loop():
             results = data.get('result', [])
             for update in results:
                 update_id = update['update_id']
-                if 'message' not in update:
+                # Check for message (private/groups) or channel_post (channels)
+                if 'message' in update:
+                    msg = update['message']
+                    is_channel = False
+                elif 'channel_post' in update:
+                    msg = update['channel_post']
+                    is_channel = True
+                else:
+                    # Other updates (edited, etc.) – just update offset
                     if update_id >= offset:
                         offset = update_id + 1
                         set_offset(offset)
                     continue
 
-                msg = update['message']
                 chat_id = msg['chat']['id']
                 message_id = msg['message_id']
                 text = msg.get('text', '')
                 caption = msg.get('caption', '')
 
-                process_message(update_id, chat_id, message_id, text, caption)
+                process_message(update_id, chat_id, message_id, text, caption, is_channel)
 
                 if update_id >= offset:
                     offset = update_id + 1

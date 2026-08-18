@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# disclaimer_bot.py – Educational Disclaimer Bot (Single-Instance Polling)
+# disclaimer_bot.py – Educational Disclaimer Bot (Admin-Controlled + Bold)
 
 import os
 import sys
@@ -13,10 +13,11 @@ import fcntl
 from flask import Flask, request
 
 # ========== CONFIG ==========
-BOT_TOKEN = "8845364296:AAEp8LIWzferAhwXlfNUIyRKY7u_YYnbwPk"  # Your token (keep as is)
+BOT_TOKEN = "8845364296:AAEp8LIWzferAhwXlfNUIyRKY7u_YYnbwPk"  # Your token
+OWNER_IDS = [8754004223]  # <-- REPLACE WITH YOUR TELEGRAM USER ID (integer)
 DB_FILE = "disclaimer.db"
 LOCK_FILE = "bot.lock"
-DISCLAIMER_TEXT = "**⚠️ Disclaimer: This content is only for educational purposes.**"  # <-- BOLD full text
+DEFAULT_DISCLAIMER = "**⚠️ Disclaimer: This content is only for educational purposes.**"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 logging.basicConfig(
@@ -51,9 +52,31 @@ def init_db():
             value TEXT
         )
     ''')
+    # Insert default disclaimer if not exists
+    c.execute("INSERT OR IGNORE INTO bot_state (key, value) VALUES ('disclaimer', ?)", (DEFAULT_DISCLAIMER,))
     conn.commit()
     conn.close()
     logger.info("Database initialized.")
+
+def get_disclaimer():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT value FROM bot_state WHERE key='disclaimer'")
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return row[0]
+    return DEFAULT_DISCLAIMER
+
+def set_disclaimer(text):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("REPLACE INTO bot_state (key, value) VALUES ('disclaimer', ?)", (text,))
+    conn.commit()
+    conn.close()
+
+def reset_disclaimer():
+    set_disclaimer(DEFAULT_DISCLAIMER)
 
 def get_offset():
     conn = sqlite3.connect(DB_FILE)
@@ -120,6 +143,10 @@ def call_telegram(method, **kwargs):
         return None
 
 def send_reply(chat_id, reply_to_message_id, text):
+    """Send a reply to a specific message, ensuring text is bold."""
+    # Ensure bold: if text does not start with ** and end with **, wrap it
+    if not (text.startswith("**") and text.endswith("**")):
+        text = f"**{text}**"
     return call_telegram(
         "sendMessage",
         chat_id=chat_id,
@@ -132,22 +159,72 @@ def send_reply(chat_id, reply_to_message_id, text):
 def process_message(update_id, chat_id, message_id, text):
     logger.info(f"Processing message: update_id={update_id}, chat={chat_id}, msg={message_id}")
 
+    # 1. Dedup by update_id (Telegram retries)
     if is_update_processed(update_id):
         logger.info(f"Update {update_id} already processed – skipping.")
         return
 
+    # 2. Dedup by (chat_id, message_id)
     if is_message_processed(chat_id, message_id):
         logger.info(f"Message {chat_id}/{message_id} already processed – skipping.")
         mark_update_processed(update_id)
         return
 
-    if text and DISCLAIMER_TEXT in text:
+    # 3. Handle admin commands (before disclaimer check)
+    if text and text.startswith("/"):
+        parts = text.split(maxsplit=1)
+        cmd = parts[0].lower()
+        args = parts[1] if len(parts) > 1 else ""
+
+        # /getdisclaimer – anyone can see
+        if cmd == "/getdisclaimer":
+            current = get_disclaimer()
+            # Remove bold markers for display (optional)
+            display = current.strip("**")
+            send_reply(chat_id, message_id, f"📜 **Current Disclaimer:**\n{current}")
+            mark_update_processed(update_id)
+            mark_message_processed(chat_id, message_id)
+            return
+
+        # Admin-only commands
+        if chat_id not in OWNER_IDS:
+            send_reply(chat_id, message_id, "❌ You are not authorized to use this command.")
+            mark_update_processed(update_id)
+            mark_message_processed(chat_id, message_id)
+            return
+
+        if cmd == "/setdisclaimer":
+            if not args:
+                send_reply(chat_id, message_id, "Usage: /setdisclaimer <your disclaimer text>")
+            else:
+                set_disclaimer(args)
+                send_reply(chat_id, message_id, f"✅ Disclaimer updated!\n\n{args}")
+            mark_update_processed(update_id)
+            mark_message_processed(chat_id, message_id)
+            return
+
+        if cmd == "/resetdisclaimer":
+            reset_disclaimer()
+            send_reply(chat_id, message_id, f"✅ Disclaimer reset to default.\n\n{DEFAULT_DISCLAIMER}")
+            mark_update_processed(update_id)
+            mark_message_processed(chat_id, message_id)
+            return
+
+        # Other commands – ignore, but mark processed so no disclaimer reply
+        mark_update_processed(update_id)
+        mark_message_processed(chat_id, message_id)
+        return
+
+    # 4. Normal message – check if disclaimer already present
+    current_disclaimer = get_disclaimer()
+    if text and current_disclaimer in text:
         logger.info("Disclaimer already present in original message – skipping.")
         mark_update_processed(update_id)
         mark_message_processed(chat_id, message_id)
         return
 
-    result = send_reply(chat_id, message_id, DISCLAIMER_TEXT)
+    # 5. Send the disclaimer as a reply (bold ensured by send_reply)
+    result = send_reply(chat_id, message_id, current_disclaimer)
     if result:
         logger.info(f"Disclaimer sent for message {chat_id}/{message_id}")
         mark_update_processed(update_id)
